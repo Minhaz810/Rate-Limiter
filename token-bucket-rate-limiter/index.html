@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Token Bucket Rate Limiter</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      background: #0f0f1a;
+      color: #e2e2e2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 32px;
+      padding: 40px 20px;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #6ee7b7, #3b82f6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    /* ── Stats row ─────────────────────────────── */
+    .stats {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .stat-card {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px;
+      padding: 18px 28px;
+      text-align: center;
+      min-width: 140px;
+      backdrop-filter: blur(10px);
+    }
+    .stat-card .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: #888; margin-bottom: 6px; }
+    .stat-card .value { font-size: 1.6rem; font-weight: 700; }
+    .stat-card .value.tokens  { color: #6ee7b7; }
+    .stat-card .value.capacity { color: #3b82f6; }
+    .stat-card .value.refill  { color: #facc15; }
+
+    /* ── Bucket visual ─────────────────────────── */
+    .bucket-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+    .bucket {
+      width: 180px;
+      height: 240px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top: none;
+      border-radius: 0 0 24px 24px;
+      position: relative;
+      overflow: hidden;
+      background: rgba(255,255,255,0.03);
+    }
+    .bucket-fill {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: linear-gradient(0deg, #3b82f6, #6ee7b7);
+      transition: height 0.4s ease;
+      border-radius: 0 0 20px 20px;
+    }
+    .bucket-label {
+      position: absolute;
+      width: 100%;
+      top: 50%;
+      transform: translateY(-50%);
+      text-align: center;
+      font-weight: 700;
+      font-size: 1.4rem;
+      color: #fff;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      z-index: 2;
+    }
+
+    /* ── Buttons ────────────────────────────────── */
+    .actions {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    button {
+      font-family: inherit;
+      font-weight: 600;
+      font-size: 0.95rem;
+      border: none;
+      border-radius: 12px;
+      padding: 14px 32px;
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.25s;
+    }
+    button:active { transform: scale(0.96); }
+
+    .btn-request {
+      background: linear-gradient(135deg, #6ee7b7, #3b82f6);
+      color: #0f0f1a;
+    }
+    .btn-request:hover { box-shadow: 0 0 24px rgba(110,231,183,0.4); }
+
+    .btn-reset {
+      background: rgba(255,255,255,0.08);
+      color: #e2e2e2;
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .btn-reset:hover { background: rgba(255,255,255,0.14); }
+
+    /* ── Log ────────────────────────────────────── */
+    .log-wrapper {
+      width: 100%;
+      max-width: 480px;
+    }
+    .log-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; color: #888; margin-bottom: 8px; }
+    .log {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px;
+      padding: 16px;
+      height: 180px;
+      overflow-y: auto;
+      font-size: 0.82rem;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .log-entry { padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .log-entry.allowed { color: #6ee7b7; }
+    .log-entry.denied  { color: #f87171; }
+  </style>
+</head>
+<body>
+
+  <h1>🪣 Token Bucket Rate Limiter</h1>
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat-card">
+      <div class="label">Current Tokens</div>
+      <div class="value tokens" id="tokenCount">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Bucket Capacity</div>
+      <div class="value capacity" id="capacity">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Refill Rate</div>
+      <div class="value refill" id="refillRate">—</div>
+    </div>
+  </div>
+
+  <!-- Bucket -->
+  <div class="bucket-wrapper">
+    <div class="bucket">
+      <div class="bucket-fill" id="bucketFill"></div>
+      <div class="bucket-label" id="bucketLabel">—</div>
+    </div>
+  </div>
+
+  <!-- Buttons -->
+  <div class="actions">
+    <button class="btn-request" id="requestBtn">Send Request (−1 token)</button>
+    <button class="btn-reset"   id="resetBtn">Reset Bucket</button>
+  </div>
+
+  <!-- Log -->
+  <div class="log-wrapper">
+    <div class="log-title">Request Log</div>
+    <div class="log" id="log"></div>
+  </div>
+
+  <script>
+    const API = "http://localhost:8000";
+
+    const $tokens    = document.getElementById("tokenCount");
+    const $capacity  = document.getElementById("capacity");
+    const $refill    = document.getElementById("refillRate");
+    const $fill      = document.getElementById("bucketFill");
+    const $label     = document.getElementById("bucketLabel");
+    const $log       = document.getElementById("log");
+
+    /* ── UI updaters ─────────────────────────── */
+    function updateUI(data) {
+      const pct = (data.tokens / data.capacity) * 100;
+      $tokens.textContent   = Math.floor(data.tokens);
+      $capacity.textContent = data.capacity;
+      $refill.textContent   = data.refill_rate + " /sec";
+      $fill.style.height    = pct + "%";
+      $label.textContent    = Math.floor(data.tokens) + " / " + data.capacity;
+    }
+
+    function addLog(msg, allowed) {
+      const el = document.createElement("div");
+      el.className = "log-entry " + (allowed ? "allowed" : "denied");
+      const ts = new Date().toLocaleTimeString();
+      el.textContent = `[${ts}] ${msg}`;
+      $log.prepend(el);
+      // keep max 50 entries
+      while ($log.children.length > 50) $log.lastChild.remove();
+    }
+
+    /* ── API calls ───────────────────────────── */
+    async function fetchStatus() {
+      try {
+        const res = await fetch(API + "/status");
+        const data = await res.json();
+        updateUI(data);
+      } catch (e) {
+        console.error("Status fetch failed", e);
+      }
+    }
+
+    async function sendRequest() {
+      try {
+        const res  = await fetch(API + "/request");
+        const data = await res.json();
+        updateUI(data);
+        addLog(data.message, data.allowed);
+      } catch (e) {
+        addLog("⚠️ Server unreachable", false);
+      }
+    }
+
+    async function resetBucket() {
+      try {
+        await fetch(API + "/reset", { method: "POST" });
+        await fetchStatus();
+        addLog("🔄 Bucket reset to full", true);
+      } catch (e) {
+        addLog("⚠️ Reset failed", false);
+      }
+    }
+
+    /* ── Event listeners ─────────────────────── */
+    document.getElementById("requestBtn").addEventListener("click", sendRequest);
+    document.getElementById("resetBtn").addEventListener("click", resetBucket);
+
+    /* Poll status every 500ms to show refill in real-time */
+    fetchStatus();
+    setInterval(fetchStatus, 500);
+  </script>
+</body>
+</html>
